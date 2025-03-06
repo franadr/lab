@@ -1,0 +1,67 @@
+name: Linux
+
+on:
+  push:
+    branches: [ dev, main ]
+  pull_request:
+    branches: [ dev ]
+    paths-ignore:
+      - 'Docker'
+      - '**/README.md'
+      - '**/LICENCE'
+env:
+  CMAKE_VERSION: 3.31.5
+
+jobs:
+  linux-build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ["release","debug"]
+        os: ["ubuntu-22.04","ubuntu-22.04-arm"]
+
+    runs-on: ${{matrix.os}}
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        submodules: recursive
+
+    - name: Install job dependencies
+      run : |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build wget build-essential
+
+    - name: Install CMake 
+      shell: bash
+      run: |
+        set +xe
+
+        which cmake &> /dev/null 
+        if [ $? -ne 0 ]; then
+          arch=$([ $(uname -m) = "arm64" ] && echo "aarch64" || echo "x86_64")
+          cmake_install_script="cmake-${{env.CMAKE_VERSION}}-linux-$arch.sh"
+          wget "https://github.com/Kitware/CMake/releases/download/v${{env.CMAKE_VERSION}}/$cmake_install_script"
+          chmod +x $cmake_install_script
+          sudo ./$cmake_install_script --skip-license --prefix=/usr/local
+        fi
+        INSTALLED_CMAKE_VERSION=$(cmake --version | awk '/version/ {print $3}')
+        echo "Using cmake: ${INSTALLED_CMAKE_VERSION}"
+    - name: Configure CMake
+      shell: bash
+      run: |
+        echo "Generating CMake for Target: ${{matrix.target}}" 
+        ./gen_cmake.sh -o _build -${{matrix.target}} -c Ninja
+
+    - name: Build
+      # Build your program with the given configuration
+      run: cmake --build _build
+
+    - name: Test
+      working-directory: ${{github.workspace}}/_build/tests/src
+      shell: bash
+      run: |
+        test_cmd="./Tests --gtest_filter=-MANUAL*"
+        if [ "${{matrix.target}}" = "debug" ]; then
+          test_cmd="./Tests-d --gtest_filter=-MANUAL*"
+        fi
+        eval $test_cmd 
